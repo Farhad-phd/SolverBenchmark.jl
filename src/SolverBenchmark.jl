@@ -31,6 +31,7 @@ include("highlighters.jl")
 include("join.jl")
 
 # Benchmark
+include("parallel.jl")
 include("run_solver.jl")
 include("bmark_solvers.jl")
 include("bmark_utils.jl")

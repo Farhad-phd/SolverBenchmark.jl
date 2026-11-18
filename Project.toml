@@ -26,6 +26,12 @@ SolverCore = "ff4d7338-4cf1-434d-91df-b86cb86fb843"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
 
+[weakdeps]
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+
+[extensions]
+SolverBenchmarkDistributedExt = "Distributed"
+
 [compat]
 BenchmarkProfiles = "0.4.6"
 BenchmarkTools = "^0.4.2, 0.5, 0.6, 0.7, 1"
@@ -48,6 +54,7 @@ julia = "^1.10.0"
 [extras]
 ADNLPModels = "54578032-b7ea-4c30-94aa-7cbd1cce6c9a"
 BenchmarkProfiles = "ecbce9bc-3e5e-569d-9e29-55181f61f8d0"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 LibGit2 = "76f85450-5226-5b5a-8eaa-529ad045b433"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
@@ -64,6 +71,7 @@ UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
 test = [
     "ADNLPModels",
     "BenchmarkProfiles",
+    "Distributed",
     "LibGit2",
     "LinearAlgebra",
     "NLPModels",
