@@ -50,9 +50,9 @@ in a sequential run, except for timings (see below).
   Starting workers takes several seconds at each call: prefer `bmark_solvers`, which starts them
   once for all solvers, or pass a `WorkerPool`. Each new worker runs with one thread and one
   BLAS thread, uses the active project, and loads `SolverBenchmark`. It then loads with `using`
-  every package and every direct submodule of a package bound in `Main` under its own name (as
-  after `using CUTEst` or `using OptimizationProblems.ADNLPProblems`), then runs
-  `worker_setup`. Anonymous functions and functions from these packages are available on the
+  the packages bound in `Main` under their own name (as after `using CUTEst`), plus the
+  submodules `Main` is `using` (as after `using OptimizationProblems.ADNLPProblems`), then runs
+  `worker_setup`. Anonymous functions and functions from these modules are available on the
   workers, but functions defined by name in your script are not: define them, or load other
   modules, through `worker_setup`. With a pool, `worker_setup` is not accepted: prepare its
   workers yourself.

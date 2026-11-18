@@ -10,11 +10,12 @@ import SolverBenchmark:
 
 const UNDEFVAR_HINT =
   "Functions defined by name in your script are not sent to the workers automatically " *
-  "(anonymous functions are). Names from packages or submodules loaded in `Main` are defined " *
-  "on the workers only if the package or submodule is bound in `Main` under its own name, as " *
-  "after `using CUTEst` or `using OptimizationProblems.ADNLPProblems`; names brought in " *
-  "another way (`import`, deeper submodules, ...) are not. Define or load the missing names " *
-  "on the workers with `worker_setup`, e.g. `worker_setup = \"my_definitions.jl\"`, " *
+  "(anonymous functions are). The workers load the packages bound in `Main` under their own " *
+  "name and the submodules `Main` is `using`, as after `using CUTEst` or " *
+  "`using OptimizationProblems.ADNLPProblems`; names brought into `Main` in another way, " *
+  "e.g. by `using P: f` or `import P.S`, are not defined on the workers. Define or load the " *
+  "missing names on the workers with `worker_setup`, e.g. " *
+  "`worker_setup = \"my_definitions.jl\"`, " *
   "`worker_setup = quote ... end` or " *
   "`worker_setup = :(using OptimizationProblems.ADNLPProblems)`."
 
@@ -95,8 +96,8 @@ that existed before are not touched.
 
 Each worker runs with one thread and one BLAS thread, uses the active project and the
 `LOAD_PATH` of this process, and loads `SolverBenchmark`. It then loads with `using` every
-package bound in `Main` under its own name (as after `using CUTEst`), then every direct
-submodule of a package bound in `Main` under its own name (as after
+package bound in `Main` under its own name (as after `using CUTEst` or `import CUTEst`), then
+every submodule of a package that `Main` is `using` (as after
 `using OptimizationProblems.ADNLPProblems`). Finally it runs `worker_setup`: an `Expr`
 evaluated in `Main`, or the path of a file included in `Main`.
 """
@@ -136,24 +137,51 @@ end
 _bound_in(main::Module, m::Module) =
   isdefined(main, nameof(m)) && getglobal(main, nameof(m)) === m
 
+# The modules `main` is `using`. `jl_module_usings` is internal to Julia; it exists with this
+# signature in 1.10 and 1.12. Kept in its own function so that a failure of the `ccall`, even
+# at compile time, is thrown where `_modules_to_load` can catch it.
+_module_usings(main::Module) =
+  Module[m for m in ccall(:jl_module_usings, Any, (Any,), main) if m isa Module]
+
+# Whether `m` is one of the modules of `loaded` or lies inside one of them. Modules inside
+# `Main`, such as modules defined in the user's script, are excluded.
+function _inside(m::Module, loaded)
+  while m !== Main
+    any(l -> l === m, loaded) && return true
+    parent = parentmodule(m)
+    parent === m && return false
+    m = parent
+  end
+  return false
+end
+
 # Modules to load with `using` on the workers so that their `Main` has the names of `main`:
-# 1. the modules of `loaded` bound in `main` under their own name, e.g. after `using CUTEst`;
-# 2. then the direct submodules of the modules of `loaded` bound in `main` under their own name,
-#    e.g. after `using OptimizationProblems.ADNLPProblems`.
+# 1. the modules of `loaded` bound in `main` under their own name, as after `using CUTEst` or
+#    `import CUTEst`;
+# 2. then the other modules `main` is `using` that lie inside a module of `loaded`, as after
+#    `using OptimizationProblems.ADNLPProblems`. This replicates the user's `using P.S`
+#    statements, and nothing else: a plain `using LinearAlgebra` does not bring `BLAS`.
 # `loaded` is `values(Base.loaded_modules)` in practice; a test passes its own modules.
 function _modules_to_load(main::Module, loaded)
-  candidates = Module[m for m in loaded if !(nameof(m) in (:Core, :Base, :Main))]
-  packages = Module[m for m in candidates if _bound_in(main, m)]
-  submodules = Module[]
-  for p in candidates, name in names(p; all = true)
-    # skip deprecated bindings: reading them prints a deprecation warning
-    (isdefined(p, name) && !Base.isdeprecated(p, name)) || continue
-    s = getglobal(p, name)
-    if s isa Module && s !== p && parentmodule(s) === p && _bound_in(main, s)
-      push!(submodules, s)
-    end
-  end
+  loaded = collect(Module, loaded)
+  packages = Module[
+    m for m in loaded if !(nameof(m) in (:Core, :Base, :Main)) && _bound_in(main, m)
+  ]
   sort!(unique!(packages), by = nameof)
+  usings = try
+    _module_usings(main)
+  catch e
+    msg =
+      "could not list the modules used by `Main` (internal function `jl_module_usings`): " *
+      "only the packages bound in `Main` under their own name are loaded on the workers. " *
+      "Load submodules with `worker_setup`, e.g. " *
+      "`worker_setup = :(using OptimizationProblems.ADNLPProblems)`."
+    @warn msg exception = e
+    Module[]
+  end
+  submodules = Module[
+    s for s in usings if !(s in (Core, Base, Main)) && !(s in packages) && _inside(s, loaded)
+  ]
   sort!(unique!(submodules), by = fullname)
   return [packages; submodules]
 end

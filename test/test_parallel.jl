@@ -124,9 +124,11 @@ run_vector(; kwargs...) =
 
 # A fake package with two submodules, and fake `Main` modules that load them in different ways,
 # all inside an anonymous host module, so that including this file again replaces nothing.
+# Like `LinearAlgebra` with `BLAS`, the package exports the name of its submodule.
 function fake_modules()
   host = Module(:FakeHost)
   Core.eval(host, :(module FakePackage
+  export FakeSubmodule
   module FakeSubmodule
   export fake_constructor
   fake_constructor() = 1
@@ -145,6 +147,14 @@ function fake_modules()
   end))
   Core.eval(host, :(module MainWithRenamedSubmodule
   import ..FakePackage.FakeSubmodule as Renamed
+  end))
+  Core.eval(host, :(module MainWithLocalModule
+  using ..FakePackage
+  module LocalModule
+  export local_value
+  local_value = 1
+  end
+  using .LocalModule
   end))
   return host
 end
@@ -348,16 +358,24 @@ run_bmark(; kwargs...) = quietly(() -> bmark_solvers(bmark_dict(), bmark_problem
     pkg = host.FakePackage
     sub = pkg.FakeSubmodule
     modules_to_load = ext._modules_to_load
-    # `using` of the submodule brings its exports into the fake `Main`
-    @test isdefined(host.MainWithBoth, :fake_constructor)
+    # the fake modules behave as intended
+    @test isdefined(host.MainWithSubmodule, :fake_constructor)
+    @test !isdefined(host.MainWithPackage, :fake_constructor)
+    @test getglobal(host.MainWithPackage, :FakeSubmodule) === sub
+    @test isdefined(host.MainWithLocalModule, :local_value)
+
     @test modules_to_load(host.MainWithBoth, [pkg]) == [pkg, sub]
+    # `using FakePackage` binds the exported name `FakeSubmodule`, but `Main` is not `using`
+    # the submodule: it is not loaded
     @test modules_to_load(host.MainWithPackage, [pkg]) == [pkg]
-    # the submodule is found even when its package is not bound in `Main`
+    # the submodule is loaded even when its package is not bound in `Main`
     @test modules_to_load(host.MainWithSubmodule, [pkg]) == [sub]
-    # bound under another name: not loaded
+    # `import ... as Renamed`: neither bound under its own name nor `using`'d
     @test modules_to_load(host.MainWithRenamedSubmodule, [pkg]) == Module[]
-    # packages that are not loaded, and Core and Base, are ignored
-    @test modules_to_load(host.MainWithBoth, Module[]) == Module[]
+    # a module defined in `Main` itself is not loaded, even if `Main` is `using` it
+    @test modules_to_load(host.MainWithLocalModule, [pkg]) == [pkg]
+    # modules outside the loaded packages, and Core and Base, are ignored
+    @test modules_to_load(host.MainWithSubmodule, Module[]) == Module[]
     @test modules_to_load(host.MainWithBoth, [Core, Base]) == Module[]
   end
 

@@ -55,15 +55,15 @@ done. Workers that existed before are not touched. Starting workers takes severa
 solvers need on its workers yourself.
 
 Each new worker runs with one thread and one BLAS thread, uses the active project, and loads
-SolverBenchmark. It then loads every package you loaded with `using`, and every submodule you
-loaded with `using` directly below a package, such as `using OptimizationProblems.ADNLPProblems`.
-Finally it runs `worker_setup` if given.
+SolverBenchmark. It then loads the packages bound in `Main` under their own name, as after
+`using CUTEst` or `import CUTEst`, plus the submodules `Main` is `using`, as after
+`using OptimizationProblems.ADNLPProblems`. Finally it runs `worker_setup` if given.
 
 Anonymous functions, like `nlp -> trunk(nlp, max_time = 60.0)`, and functions from these
-packages reach the workers automatically. Functions defined by name in your script do not: put
+modules reach the workers automatically. Functions defined by name in your script do not: put
 them in a file and pass `worker_setup = "my_definitions.jl"`, or pass an expression,
-`worker_setup = quote ... end`. Modules loaded in another way, for instance with `import` or
-deeper than one level below a package, can be loaded the same way, e.g.
+`worker_setup = quote ... end`. Names brought into `Main` in another way, for instance with
+`using P: f` or `import P.S`, can be loaded the same way, e.g.
 `worker_setup = :(using OptimizationProblems.ADNLPProblems)`.
 
 When `problems` is a generator, each worker builds its own models with the generator's
