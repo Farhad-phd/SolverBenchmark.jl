@@ -49,10 +49,12 @@ in a sequential run, except for timings (see below).
 * `distributed` requires `using Distributed`, which loads the extension that implements it.
   Starting workers takes several seconds at each call: prefer `bmark_solvers`, which starts them
   once for all solvers, or pass a `WorkerPool`. Each new worker runs with one thread and one
-  BLAS thread, uses the active project, loads `SolverBenchmark` and every package loaded with
-  `using` in `Main`, then runs `worker_setup`. Anonymous functions and functions from packages
-  are sent to the workers automatically, but functions defined by name in your script are not:
-  define them through `worker_setup`. With a pool, `worker_setup` is not accepted: prepare its
+  BLAS thread, uses the active project, and loads `SolverBenchmark`. It then loads with `using`
+  every package and every direct submodule of a package bound in `Main` under its own name (as
+  after `using CUTEst` or `using OptimizationProblems.ADNLPProblems`), then runs
+  `worker_setup`. Anonymous functions and functions from these packages are available on the
+  workers, but functions defined by name in your script are not: define them, or load other
+  modules, through `worker_setup`. With a pool, `worker_setup` is not accepted: prepare its
   workers yourself.
 * With `distributed`, if `problems` is a generator, each worker builds its models with the
   generator's function; otherwise the models are built here and sent, which is refused for

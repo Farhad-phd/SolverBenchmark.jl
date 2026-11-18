@@ -122,6 +122,33 @@ vector_solver = make_solver(fail = Set([3]))
 run_vector(; kwargs...) =
   quietly(() -> solve_problems(vector_solver, "solver", vector_problems; kwargs...))
 
+# A fake package with two submodules, and fake `Main` modules that load them in different ways,
+# all inside an anonymous host module, so that including this file again replaces nothing.
+function fake_modules()
+  host = Module(:FakeHost)
+  Core.eval(host, :(module FakePackage
+  module FakeSubmodule
+  export fake_constructor
+  fake_constructor() = 1
+  end
+  module OtherSubmodule end
+  end))
+  Core.eval(host, :(module MainWithBoth
+  using ..FakePackage
+  using ..FakePackage.FakeSubmodule
+  end))
+  Core.eval(host, :(module MainWithPackage
+  using ..FakePackage
+  end))
+  Core.eval(host, :(module MainWithSubmodule
+  using ..FakePackage.FakeSubmodule
+  end))
+  Core.eval(host, :(module MainWithRenamedSubmodule
+  import ..FakePackage.FakeSubmodule as Renamed
+  end))
+  return host
+end
+
 bmark_dict() = Dict(:a => make_solver(fail = Set([2])), :b => make_solver(fail = Set([1, 5])))
 bmark_problems() = (make_problem(k) for k = 1:10)
 run_bmark(; kwargs...) = quietly(() -> bmark_solvers(bmark_dict(), bmark_problems(); kwargs...))
@@ -307,6 +334,31 @@ run_bmark(; kwargs...) = quietly(() -> bmark_solvers(bmark_dict(), bmark_problem
     @test_throws ArgumentError solve_problems(solver, "solver", Any[]; threads = -1)
     @test_throws ArgumentError solve_problems(solver, "solver", Any[]; distributed = -1)
     @test_throws ArgumentError solve_problems(solver, "solver", Any[]; distributed = "two")
+    # `Bool <: Integer`, but `distributed = true` must not start one worker
+    for value in (true, false)
+      @test_throws ArgumentError solve_problems(solver, "solver", Any[]; threads = value)
+      @test_throws ArgumentError solve_problems(solver, "solver", Any[]; distributed = value)
+      @test_throws ArgumentError bmark_solvers(Dict(:s => solver), Any[]; threads = value)
+      @test_throws ArgumentError bmark_solvers(Dict(:s => solver), Any[]; distributed = value)
+    end
+  end
+
+  @testset "modules loaded on the workers" begin
+    host = fake_modules()
+    pkg = host.FakePackage
+    sub = pkg.FakeSubmodule
+    modules_to_load = ext._modules_to_load
+    # `using` of the submodule brings its exports into the fake `Main`
+    @test isdefined(host.MainWithBoth, :fake_constructor)
+    @test modules_to_load(host.MainWithBoth, [pkg]) == [pkg, sub]
+    @test modules_to_load(host.MainWithPackage, [pkg]) == [pkg]
+    # the submodule is found even when its package is not bound in `Main`
+    @test modules_to_load(host.MainWithSubmodule, [pkg]) == [sub]
+    # bound under another name: not loaded
+    @test modules_to_load(host.MainWithRenamedSubmodule, [pkg]) == Module[]
+    # packages that are not loaded, and Core and Base, are ignored
+    @test modules_to_load(host.MainWithBoth, Module[]) == Module[]
+    @test modules_to_load(host.MainWithBoth, [Core, Base]) == Module[]
   end
 
   @testset "witness: several threads used" begin

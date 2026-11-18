@@ -10,9 +10,13 @@ import SolverBenchmark:
 
 const UNDEFVAR_HINT =
   "Functions defined by name in your script are not sent to the workers automatically " *
-  "(anonymous functions and functions from packages are). Define them on the workers with " *
-  "`worker_setup`, e.g. `worker_setup = \"my_definitions.jl\"` or " *
-  "`worker_setup = quote ... end`."
+  "(anonymous functions are). Names from packages or submodules loaded in `Main` are defined " *
+  "on the workers only if the package or submodule is bound in `Main` under its own name, as " *
+  "after `using CUTEst` or `using OptimizationProblems.ADNLPProblems`; names brought in " *
+  "another way (`import`, deeper submodules, ...) are not. Define or load the missing names " *
+  "on the workers with `worker_setup`, e.g. `worker_setup = \"my_definitions.jl\"`, " *
+  "`worker_setup = quote ... end` or " *
+  "`worker_setup = :(using OptimizationProblems.ADNLPProblems)`."
 
 # Solves the problems on the workers of `pool`, one problem per remote call.
 struct DistributedRunner{P <: AbstractWorkerPool} <: AbstractRunner
@@ -90,9 +94,11 @@ is a `WorkerPool` of these workers. The workers are removed when `f` returns or 
 that existed before are not touched.
 
 Each worker runs with one thread and one BLAS thread, uses the active project and the
-`LOAD_PATH` of this process, loads `SolverBenchmark` and every package loaded with `using` in
-`Main`, then runs `worker_setup`: an `Expr` evaluated in `Main`, or the path of a file included
-in `Main`.
+`LOAD_PATH` of this process, and loads `SolverBenchmark`. It then loads with `using` every
+package bound in `Main` under its own name (as after `using CUTEst`), then every direct
+submodule of a package bound in `Main` under its own name (as after
+`using OptimizationProblems.ADNLPProblems`). Finally it runs `worker_setup`: an `Expr`
+evaluated in `Main`, or the path of a file included in `Main`.
 """
 function with_workers(f, n::Integer, worker_setup = nothing)
   n >= 1 || throw(ArgumentError("the number of workers must be positive, got $n"))
@@ -126,28 +132,42 @@ function _setup_expr(worker_setup)
   )
 end
 
-# Names of the packages bound under their own name in `Main`, e.g. by `using CUTEst`.
-function _main_packages()
-  pkgs = Symbol[]
-  for m in values(Base.loaded_modules)
-    name = nameof(m)
-    name in (:Core, :Base, :Main) && continue
-    if isdefined(Main, name) && getglobal(Main, name) === m
-      push!(pkgs, name)
+# Whether module `m` is bound in module `main` under its own name.
+_bound_in(main::Module, m::Module) =
+  isdefined(main, nameof(m)) && getglobal(main, nameof(m)) === m
+
+# Modules to load with `using` on the workers so that their `Main` has the names of `main`:
+# 1. the modules of `loaded` bound in `main` under their own name, e.g. after `using CUTEst`;
+# 2. then the direct submodules of the modules of `loaded` bound in `main` under their own name,
+#    e.g. after `using OptimizationProblems.ADNLPProblems`.
+# `loaded` is `values(Base.loaded_modules)` in practice; a test passes its own modules.
+function _modules_to_load(main::Module, loaded)
+  candidates = Module[m for m in loaded if !(nameof(m) in (:Core, :Base, :Main))]
+  packages = Module[m for m in candidates if _bound_in(main, m)]
+  submodules = Module[]
+  for p in candidates, name in names(p; all = true)
+    # skip deprecated bindings: reading them prints a deprecation warning
+    (isdefined(p, name) && !Base.isdeprecated(p, name)) || continue
+    s = getglobal(p, name)
+    if s isa Module && s !== p && parentmodule(s) === p && _bound_in(main, s)
+      push!(submodules, s)
     end
   end
-  return sort!(unique!(pkgs))
+  sort!(unique!(packages), by = nameof)
+  sort!(unique!(submodules), by = fullname)
+  return [packages; submodules]
 end
 
 function _init_workers(ids, setup)
   load_path = copy(LOAD_PATH)
   Distributed.remotecall_eval(Main, ids, :(append!(empty!(LOAD_PATH), $load_path)))
   Distributed.remotecall_eval(Main, ids, :(using SolverBenchmark))
-  for name in _main_packages()
+  for m in _modules_to_load(Main, collect(values(Base.loaded_modules)))
+    path = fullname(m) # (:CUTEst,) or (:OptimizationProblems, :ADNLPProblems)
     try
-      Distributed.remotecall_eval(Main, ids, Expr(:using, Expr(:., name)))
+      Distributed.remotecall_eval(Main, ids, Expr(:using, Expr(:., path...)))
     catch e
-      @warn "could not load package $name on the workers" exception = e
+      @warn "could not load $(join(path, '.')) on the workers" exception = e
     end
   end
   Distributed.remotecall_eval(Main, ids, :(SolverBenchmark._worker_init()))

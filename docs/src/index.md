@@ -54,12 +54,17 @@ done. Workers that existed before are not touched. Starting workers takes severa
 `WorkerPool` instead of an integer; you then load SolverBenchmark and the packages your
 solvers need on its workers yourself.
 
-Each new worker runs with one thread and one BLAS thread, uses the active project, loads
-SolverBenchmark and every package you loaded with `using`, then runs `worker_setup` if given.
-Anonymous functions, like `nlp -> trunk(nlp, max_time = 60.0)`, and functions from packages
-reach the workers automatically. Functions defined by name in your script do not: put them in
-a file and pass `worker_setup = "my_definitions.jl"`, or pass an expression,
-`worker_setup = quote ... end`.
+Each new worker runs with one thread and one BLAS thread, uses the active project, and loads
+SolverBenchmark. It then loads every package you loaded with `using`, and every submodule you
+loaded with `using` directly below a package, such as `using OptimizationProblems.ADNLPProblems`.
+Finally it runs `worker_setup` if given.
+
+Anonymous functions, like `nlp -> trunk(nlp, max_time = 60.0)`, and functions from these
+packages reach the workers automatically. Functions defined by name in your script do not: put
+them in a file and pass `worker_setup = "my_definitions.jl"`, or pass an expression,
+`worker_setup = quote ... end`. Modules loaded in another way, for instance with `import` or
+deeper than one level below a package, can be loaded the same way, e.g.
+`worker_setup = :(using OptimizationProblems.ADNLPProblems)`.
 
 When `problems` is a generator, each worker builds its own models with the generator's
 function, and only the generator's arguments (problem names, sizes, ...) are sent. Otherwise

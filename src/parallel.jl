@@ -359,6 +359,18 @@ end
 _is_distributed(distributed) = !(distributed isa Integer && distributed == 0)
 
 function _check_parallel_keywords(threads, distributed)
+  # `Bool <: Integer`: without this check, `distributed = true` would start one worker
+  if threads isa Bool
+    throw(ArgumentError("`threads` must be a number of tasks, not a `Bool`: got $threads"))
+  end
+  if distributed isa Bool
+    throw(
+      ArgumentError(
+        "`distributed` must be a number of workers or an `AbstractWorkerPool`, not a " *
+        "`Bool`: got $distributed",
+      ),
+    )
+  end
   threads >= 0 || throw(ArgumentError("`threads` must be nonnegative, got $threads"))
   if distributed isa Integer && distributed < 0
     throw(ArgumentError("`distributed` must be nonnegative, got $distributed"))
